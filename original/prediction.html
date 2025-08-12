@@ -1,0 +1,456 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock, Crypto, Futures & Options Price Predictor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 10px;
+            padding: 10px;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+        h1 {
+            font-size: 1.5em;
+            text-align: center;
+        }
+        p {
+            font-size: 1em;
+        }
+        input, button, select {
+            width: 100%;
+            max-width: 300px;
+            padding: 10px;
+            margin: 5px 0;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4BC0C0;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #3aa0a0;
+        }
+        #chart-container {
+            width: 100%;
+            max-width: 600px;
+            height: 50vh;
+            margin: 10px auto;
+        }
+        #output, #lookupResults {
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .signal-buy { color: green; font-weight: bold; }
+        .signal-sell { color: red; font-weight: bold; }
+        .signal-hold { color: orange; font-weight: bold; }
+        .ticker-option {
+            cursor: pointer;
+            padding: 5px;
+            border-bottom: 1px solid #ddd;
+        }
+        .ticker-option:hover {
+            background-color: #f0f0f0;
+        }
+        nav {
+            margin: 10px 0;
+        }
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 1.2em;
+            }
+            p, #output, #lookupResults, ul {
+                font-size: 0.85em;
+            }
+            input, button, select {
+                padding: 8px;
+            }
+            #chart-container {
+                height: 40vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="options.html"><button>Basic Options Analyzer</button></a>
+        <a href="advanced_options.html"><button>Advanced Options</button></a>
+    </nav>
+    <h1>Stock, Crypto, Futures & Options Price Predictor</h1>
+    <p>Choose type, enter a ticker (e.g., XSP for crypto, AAPL for stock, ES=F for futures, ^SPX or ^XSP for options), or use Lookup to find tickers.</p>
+    <select id="assetType">
+        <option value="crypto">Crypto</option>
+        <option value="stock">Stock</option>
+        <option value="futures">Futures</option>
+        <option value="options">Index Options</option>
+    </select>
+    <input type="text" id="ticker" placeholder="e.g., XSP, AAPL, ES=F, ^SPX, ^XSP" />
+    <button onclick="lookupTicker()">Lookup Ticker</button>
+    <button onclick="getPrediction()">Get Prediction</button>
+    <div id="lookupResults"></div>
+    <div id="output"></div>
+    <div id="chart-container">
+        <canvas id="priceChart"></canvas>
+    </div>
+
+    <script>
+        const ALPHA_VANTAGE_API_KEY = 'YOUR_ALPHA_VANTAGE_API_KEY'; // Replace with your Alpha Vantage API key
+
+        async function lookupTicker() {
+            const ticker = document.getElementById('ticker').value.trim().toLowerCase().replace(/[^a-z0-9-^=]/g, '');
+            const assetType = document.getElementById('assetType').value;
+            const lookupResults = document.getElementById('lookupResults');
+            lookupResults.innerHTML = '<p>Searching...</p>';
+
+            if (!ticker) {
+                lookupResults.innerHTML = '<p>Please enter a ticker to search.</p>';
+                return;
+            }
+
+            try {
+                let results = [];
+                if (assetType === 'crypto') {
+                    const response = await fetchWithRetry(`https://api.coingecko.com/api/v3/search?query=${ticker}`);
+                    const data = await response.json();
+                    if (data.coins && data.coins.length > 0) {
+                        results = data.coins.slice(0, 5).map(coin => ({
+                            ticker: coin.symbol.toUpperCase(),
+                            name: coin.name,
+                            type: 'Crypto',
+                            id: coin.id
+                        }));
+                    }
+                } else {
+                    const response = await fetchWithRetry(`https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=${ticker}&apikey=${ALPHA_VANTAGE_API_KEY}`);
+                    const data = await response.json();
+                    if (data['bestMatches'] && data['bestMatches'].length > 0) {
+                        results = data['bestMatches'].slice(0, 5).map(match => ({
+                            ticker: match['1. symbol'],
+                            name: match['2. name'],
+                            type: match['3. type'] === 'Equity' ? 'Stock' : (match['3. type'] === 'Index' ? 'Index Options' : 'Futures')
+                        }));
+                    }
+                    if (assetType === 'options' && (ticker === 'spx' || ticker === '^spx' || ticker === 'xsp' || ticker === '^xsp')) {
+                        results.push({
+                            ticker: ticker === 'spx' || ticker === '^spx' ? '^SPX' : '^XSP',
+                            name: ticker === 'spx' || ticker === '^spx' ? 'S&P 500 Index' : 'Mini-SPX Index',
+                            type: 'Index Options'
+                        });
+                    }
+                }
+
+                if (results.length === 0) {
+                    lookupResults.innerHTML = `<p>No results found for "${ticker}" in ${assetType}. Try a different ticker or asset type.</p>`;
+                    return;
+                }
+
+                lookupResults.innerHTML = `
+                    <p><strong>Search Results for "${ticker}":</strong></p>
+                    <ul>
+                        ${results.map(r => `
+                            <li class="ticker-option" onclick="selectTicker('${r.ticker}', '${r.type.toLowerCase()}')">
+                                ${r.ticker} - ${r.name} (${r.type}${r.id ? ', Coin ID: ' + r.id : ''})
+                            </li>
+                        `).join('')}
+                    </ul>
+                `;
+            } catch (error) {
+                lookupResults.innerHTML = `<p>Error searching ticker: ${error.message}. Please try again.</p>`;
+            }
+        }
+
+        function selectTicker(ticker, type) {
+            document.getElementById('ticker').value = ticker;
+            document.getElementById('assetType').value = type;
+            document.getElementById('lookupResults').innerHTML = '';
+        }
+
+        function calculateEMA(prices, period) {
+            const k = 2 / (period + 1);
+            let ema = prices[0];
+            const emaArray = [ema];
+            for (let i = 1; i < prices.length; i++) {
+                ema = prices[i] * k + ema * (1 - k);
+                emaArray.push(ema);
+            }
+            return emaArray;
+        }
+
+        function calculateMACD(prices) {
+            if (prices.length < 26 + 9) return { macd: null, signal: null, prevMacd: null, prevSignal: null };
+            const closingPrices = prices.map(p => p[1]);
+            const ema12 = calculateEMA(closingPrices, 12);
+            const ema26 = calculateEMA(closingPrices, 26);
+            const macdLine = ema12.slice(-ema26.length).map((ema12, i) => ema12 - ema26[i]);
+            const signalLine = calculateEMA(macdLine, 9);
+            return {
+                macd: macdLine[macdLine.length - 1],
+                signal: signalLine[signalLine.length - 1],
+                prevMacd: macdLine[macdLine.length - 2],
+                prevSignal: signalLine[signalLine.length - 2]
+            };
+        }
+
+        function calculateRSI(prices, period = 14) {
+            if (prices.length < period + 1) return null;
+            const closingPrices = prices.slice(-(period + 1)).map(p => p[1]);
+            let gains = 0;
+            let losses = 0;
+            for (let i = 1; i < closingPrices.length; i++) {
+                const change = closingPrices[i] - closingPrices[i - 1];
+                if (change > 0) {
+                    gains += change;
+                } else {
+                    losses += Math.abs(change);
+                }
+            }
+            const avgGain = gains / period;
+            const avgLoss = losses / period;
+            if (avgLoss === 0) return 100;
+            const rs = avgGain / avgLoss;
+            return 100 - (100 / (1 + rs));
+        }
+
+        function getCombinedSignal(rsi, macdData) {
+            if (rsi === null || macdData.macd === null) return 'Insufficient data';
+            const rsiSignal = rsi < 30 ? 'Buy' : rsi > 70 ? 'Sell' : 'Hold';
+            const macdSignal = macdData.macd > macdData.signal && macdData.prevMacd <= macdData.prevSignal ? 'Buy' :
+                              macdData.macd < macdData.signal && macdData.prevMacd >= macdData.prevSignal ? 'Sell' : 'Hold';
+            if (rsiSignal === 'Buy' && macdSignal === 'Buy') return 'Buy (Oversold + Bullish Crossover)';
+            if (rsiSignal === 'Sell' && macdSignal === 'Sell') return 'Sell (Overbought + Bearish Crossover)';
+            return 'Hold (Neutral)';
+        }
+
+        function getSignalClass(signal) {
+            if (signal.includes('Buy')) return 'signal-buy';
+            if (signal.includes('Sell')) return 'signal-sell';
+            return 'signal-hold';
+        }
+
+        async function getPrediction() {
+            const ticker = document.getElementById('ticker').value.trim().toLowerCase().replace(/[^a-z0-9-^=]/g, '');
+            const assetTypeSelected = document.getElementById('assetType').value;
+            if (!ticker) {
+                alert('Please enter a valid ticker or use Lookup to find one.');
+                return;
+            }
+
+            const output = document.getElementById('output');
+            output.innerHTML = '<p>Loading...</p>';
+
+            try {
+                let currentPrice = 0;
+                let prices = [];
+                let assetType = assetTypeSelected === 'options' ? 'Index Options' : assetTypeSelected.charAt(0).toUpperCase() + assetTypeSelected.slice(1);
+                let coinId = '';
+
+                if (assetTypeSelected === 'crypto') {
+                    const searchResponse = await fetchWithRetry(`https://api.coingecko.com/api/v3/search?query=${ticker}`);
+                    const searchData = await searchResponse.json();
+                    if (!searchData.coins || searchData.coins.length === 0) {
+                        throw new Error('No crypto found for this ticker.');
+                    }
+                    coinId = searchData.coins[0].id;
+
+                    const priceResponse = await fetchWithRetry(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+                    const priceData = await priceResponse.json();
+                    currentPrice = priceData[coinId]?.usd;
+                    if (!currentPrice) {
+                        throw new Error('Unable to fetch current price.');
+                    }
+
+                    const marketResponse = await fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=35&interval=daily`);
+                    const marketData = await marketResponse.json();
+                    prices = marketData.prices;
+                } else {
+                    let symbol = ticker;
+                    if (assetTypeSelected === 'options') {
+                        if (ticker === 'spx' || ticker === '^spx') {
+                            symbol = '^SPX';
+                        } else if (ticker === 'xsp' || ticker === '^xsp') {
+                            symbol = '^XSP';
+                        } else {
+                            throw new Error('Invalid index options ticker. Use ^SPX or ^XSP.');
+                        }
+                    }
+                    const response = await fetchWithRetry(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&outputsize=compact&apikey=${ALPHA_VANTAGE_API_KEY}`);
+                    const data = await response.json();
+                    if (data['Error Message'] || !data['Time Series (Daily)']) {
+                        throw new Error(`No ${assetTypeSelected} found for ticker ${symbol}. Try using Lookup.`);
+                    }
+                    const timeSeries = data['Time Series (Daily)'];
+                    const dates = Object.keys(timeSeries).sort().slice(-35);
+                    prices = dates.map(date => [new Date(date).getTime(), parseFloat(timeSeries[date]['4. close'])]);
+                    currentPrice = prices[prices.length - 1][1];
+                }
+
+                if (prices.length < 26 + 9) {
+                    throw new Error('Insufficient historical data for MACD calculation.');
+                }
+
+                const rsi = calculateRSI(prices, 14);
+                const macdData = calculateMACD(prices);
+                const signal = getCombinedSignal(rsi, macdData);
+                const signalClass = getSignalClass(signal);
+
+                const recentPrices = prices.slice(-14);
+                const x = recentPrices.map((_, index) => index);
+                const y = recentPrices.map(p => p[1]);
+
+                const mean = y.reduce((a, b) => a + b, 0) / y.length;
+                const variance = y.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / y.length;
+                const volatility = Math.sqrt(variance);
+
+                const n = x.length;
+                const sumX = x.reduce((a, b) => a + b, 0);
+                const sumY = y.reduce((a, b) => a + b, 0);
+                const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+                const sumX2 = x.reduce((sum, xi) => sum + xi * xi, 0);
+                const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+                const intercept = (sumY - slope * sumX) / n;
+
+                const predictedPrices = [];
+                for (let i = n; i < n + 5; i++) {
+                    let basePrice = intercept + slope * i;
+                    const adjustment = volatility * 0.5 * (Math.random() - 0.5);
+                    predictedPrices.push(Math.max(basePrice + adjustment, 0));
+                }
+
+                const minPred = Math.min(...predictedPrices);
+                const maxPred = Math.max(...predictedPrices);
+                const avgPred = predictedPrices.reduce((a, b) => a + b, 0) / predictedPrices.length;
+
+                const today = new Date();
+                const daysOfWeek = [];
+                for (let i = 0; i < 5; i++) {
+                    const futureDate = new Date(today);
+                    futureDate.setDate(today.getDate() + i + 1);
+                    const dayName = futureDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+                    daysOfWeek.push(`${dayName}: ~$${predictedPrices[i].toFixed(2)}`);
+                }
+
+                const labels = [];
+                const chartData = [];
+                recentPrices.forEach((p, i) => {
+                    const pastDate = new Date(today);
+                    pastDate.setDate(today.getDate() - (13 - i));
+                    labels.push(pastDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+                    chartData.push(p[1]);
+                });
+                predictedPrices.forEach((pred, i) => {
+                    const futureDate = new Date(today);
+                    futureDate.setDate(today.getDate() + i + 1);
+                    labels.push(futureDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+                    chartData.push(pred);
+                });
+
+                const ctx = document.getElementById('priceChart').getContext('2d');
+                if (window.myChart) window.myChart.destroy();
+                window.myChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Price (USD)',
+                            data: chartData,
+                            borderColor: '#4BC0C0',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            fill: false,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: { title: { display: true, text: 'Price (USD)', font: { size: 12 } } },
+                            x: { title: { display: true, text: 'Date', font: { size: 12 } } }
+                        },
+                        plugins: {
+                            title: { display: true, text: `Weekly Price Prediction for ${ticker.toUpperCase()} (${assetType})`, font: { size: 14 } }
+                        }
+                    }
+                });
+
+                output.innerHTML = `
+                    <h2>Prediction for ${ticker.toUpperCase()} (${assetType}${assetTypeSelected === 'crypto' ? ', Coin ID: ' + coinId : ''})</h2>
+                    <p><strong>Current Price:</strong> $${currentPrice.toFixed(2)}</p>
+                    <p><strong>Current RSI (14):</strong> ${rsi !== null ? rsi.toFixed(2) : 'N/A'}</p>
+                    <p><strong>Current MACD:</strong> ${macdData.macd !== null ? macdData.macd.toFixed(2) + ' (Signal: ' + macdData.signal.toFixed(2) + ')' : 'N/A'}</p>
+                    <p><strong>Trading Signal:</strong> <span class="${signalClass}">${signal}</span></p>
+                    <p><strong>Weekly Expected Range:</strong> $${minPred.toFixed(2)} - $${maxPred.toFixed(2)}</p>
+                    <p><strong>Average Predicted:</strong> $${avgPred.toFixed(2)}</p>
+                    <h3>Day-by-Day Forecast:</h3>
+                    <ul>${daysOfWeek.map(day => `<li>${day}</li>`).join('')}</ul>
+                    <p><strong>Methodology:</strong> Linear regression on 14-day prices${assetTypeSelected === 'crypto' ? ' from CoinGecko' : ' from Alpha Vantage'}, adjusted for volatility. RSI and MACD for signals.</p>
+                    <p><strong>Caveats:</strong> Trend-based prediction, not financial advice. Markets are volatile; prices may vary. Data from ${assetTypeSelected === 'crypto' ? 'CoinGecko' : 'Alpha Vantage'}. Index options data is based on underlying index levels.</p>
+                `;
+            } catch (error) {
+                output.innerHTML = `<p>Error: ${error.message}. Please try again or use Lookup to find the correct ticker.</p>`;
+            }
+        }
+
+        async function fetchWithRetry(url, retries = 3, delay = 1000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url);
+                    if (response.status === 429) {
+                        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+                        continue;
+                    }
+                    if (!response.ok) {
+                        throw new Error(`HTTP error: ${response.status}`);
+                    }
+                    return response;
+                } catch (error) {
+                    if (i === retries - 1) throw error;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
