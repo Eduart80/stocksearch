@@ -2,10 +2,11 @@ require("dotenv").config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+import { join } from 'path';
 
 const app = express();
 app.use(cors()); // Enable CORS for all routes
-
+app.use(express.static(join(__dirname, 'public')));
 // app.get("/api/key", (req, res) => {
 //   res.json({ key: process.env.keypass });
 // });

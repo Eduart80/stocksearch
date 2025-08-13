@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock, Crypto, Futures & Options Price Predictor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 10px;
+            padding: 10px;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+        h1 {
+            font-size: 1.5em;
+            text-align: center;
+        }
+        p {
+            font-size: 1em;
+        }
+        input, button, select {
+            width: 100%;
+            max-width: 300px;
+            padding: 10px;
+            margin: 5px 0;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4BC0C0;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #3aa0a0;
+        }
+        #chart-container {
+            width: 100%;
+            max-width: 600px;
+            height: 50vh;
+            margin: 10px auto;
+        }
+        #output, #lookupResults {
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .signal-buy { color: green; font-weight: bold; }
+        .signal-sell { color: red; font-weight: bold; }
+        .signal-hold { color: orange; font-weight: bold; }
+        .ticker-option {
+            cursor: pointer;
+            padding: 5px;
+            border-bottom: 1px solid #ddd;
+        }
+        .ticker-option:hover {
+            background-color: #f0f0f0;
+        }
+        nav {
+            margin: 10px 0;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left: 4px solid #4BC0C0;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+            }
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 1.2em;
+            }
+            p, #output, #lookupResults, ul {
+                font-size: 0.85em;
+            }
+            input, button, select {
+                padding: 8px;
+            }
+            #chart-container {
+                height: 40vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="options.html"><button>Basic Options Analyzer</button></a>
+        <a href="advanced_options.html"><button>Advanced Options</button></a>
+    </nav>
+    <h1>Stock, Crypto, Futures & Options Price Predictor</h1>
+    <p>Choose type, enter a ticker (e.g., XSP for crypto, AAPL for stock, ES=F for futures, ^SPX or ^XSP for options), or use Lookup to find tickers.</p>
+    <select id="assetType">
+        <option value="crypto">Crypto</option>
+        <option value="stock">Stock</option>
+        <option value="futures">Futures</option>
+        <option value="options">Index Options</option>
+    </select>
+    <input type="text" id="ticker" placeholder="e.g., XSP, AAPL, ES=F, ^SPX, ^XSP" />
+    <button onclick="lookupTicker()">Lookup Ticker</button>
+    <button onclick="getPrediction()">Get Prediction</button>
+    <div id="lookupResults"></div>
+    <div id="output"></div>
+    <div id="chart-container">
+        <canvas id="priceChart"></canvas>
+    </div>
+
+    <script>
+        const ALPHA_VANTAGE_API_KEY = 'A96Z9ST5YY6GBVUG'; // Replace with your API key
+
+        async function fetchStockData(ticker) {
+            const url = `https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=${ticker}&apikey=${ALPHA_VANTAGE_API_KEY}`;
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+                const data = await response.json();
+                if (data.bestMatches && data.bestMatches.length > 0) {
+                    return data.bestMatches.map(match => ({
+                        ticker: match['1. symbol'],
+                        name: match['2. name']
+                    }));
+                } else {
+                    throw new Error('No matches found');
+                }
+            } catch (error) {
+                console.error('Error fetching stock data:', error);
+                return [];
+            }
+        }
+
+        async function lookupTicker() {
+            const ticker = document.getElementById('ticker').value.trim().toUpperCase();
+            const lookupResults = document.getElementById('lookupResults');
+            lookupResults.innerHTML = '<p>Searching...</p>';
+
+            if (!ticker) {
+                lookupResults.innerHTML = '<p>Please enter a ticker to search.</p>';
+                return;
+            }
+
+            try {
+                const results = await fetchStockData(ticker);
+                if (results.length === 0) {
+                    lookupResults.innerHTML = `<p>No results found for "${ticker}". Please try a different ticker.</p>`;
+                    return;
+                }
+
+                lookupResults.innerHTML = `
+                    <p><strong>Search Results for "${ticker}":</strong></p>
+                    <ul>
+                        ${results.map(r => `
+                            <li>${r.ticker} - ${r.name}</li>
+                        `).join('')}
+                    </ul>
+                `;
+            } catch (error) {
+                lookupResults.innerHTML = `<p>Error: ${error.message}. Please try again.</p>`;
+            }
+        }
+
+        // Placeholder for existing prediction logic
+        async function getPrediction() {
+            // Implement your prediction logic here
+            console.log('Implement prediction logic');
+        }
+    </script>
+</body>
+</html>
