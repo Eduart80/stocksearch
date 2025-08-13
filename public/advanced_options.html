@@ -1,43 +1,4 @@
-<script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-          return cell !== '' && cell != null;
-        }
-        function loadFileData(filename) {
-        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-            try {
-                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                var firstSheetName = workbook.SheetNames[0];
-                var worksheet = workbook.Sheets[firstSheetName];
-
-                // Convert sheet to JSON to filter blank rows
-                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                var filteredData = jsonData.filter(row => row.some(filledCell));
-
-                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                var headerRowIndex = filteredData.findIndex((row, index) =>
-                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                );
-                // Fallback
-                if (headerRowIndex === -1 || headerRowIndex > 25) {
-                  headerRowIndex = 0;
-                }
-
-                // Convert filtered JSON back to CSV
-                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                return csv;
-            } catch (e) {
-                console.error(e);
-                return "";
-            }
-        }
-        return gk_fileData[filename] || "";
-        }
-        </script><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -102,29 +63,16 @@
                 padding: 8px;
             }
         }
-        .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            border-left: 4px solid #4BC0C0;
-            border-radius: 50%;
-            width: 36px;
-            height: 36px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-            }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-            }
     </style>
 </head>
 <body>
     <nav>
         <a href="options.html"><button>Basic Options Analyzer</button></a>
-        <a href="index.html"><button>Price Prediction</button></a>
+        <a href="index.html"><button>Price Prediction App</button></a>
     </nav>
     <h1>Advanced Options Trading Analyzer</h1>
-    <p>Enter ticker (e.g., ^SPX, AAPL, TSLA), select expiration, spread type, and analyze spreads with $0.05 slippage, EV > $1, R/R > 100%, POP > 55%.</p>
-    <input type="text" id="ticker" placeholder="Ticker (e.g., ^SPX, AAPL, TSLA)" value="^SPX" />
+    <p>Enter ticker (e.g., SPX, AAPL, TSLA), select expiration, spread type, and analyze spreads with $0.05 slippage, EV > $1, R/R > 100%, POP > 55%.</p>
+    <input type="text" id="ticker" placeholder="Ticker (e.g., SPX, AAPL, TSLA)" value="SPX" />
     <button onclick="lookupTicker()">Lookup Ticker</button>
     <div id="lookupResults"></div>
     <select id="expiration">
@@ -138,16 +86,8 @@
     <div id="output"></div>
 
     <script>
-        const PROXY_URL = 'https://cors-anywhere.herokuapp.com/';
-        const USER_AGENTS = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0'
-        ];
-
-        function getRandomUserAgent() {
-            return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-        }
+        // Switch to '/api/tradier' if Alpha Vantage OPTIONS_DATA is unavailable
+        const API_BASE_URL = 'http://localhost:3000/api/alpha-vantage';
 
         function normCdf(x) {
             const t = 1 / (1 + 0.2316419 * Math.abs(x));
@@ -168,7 +108,7 @@
         }
 
         async function lookupTicker() {
-            const ticker = document.getElementById('ticker').value.trim().toUpperCase().replace(/[^A-Z0-9-^]/g, '');
+            const ticker = document.getElementById('ticker').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
             const lookupResults = document.getElementById('lookupResults');
             lookupResults.innerHTML = '<p>Searching...</p>';
 
@@ -178,27 +118,24 @@
             }
 
             try {
-                // First, check if ticker has options via Yahoo Finance quote API
-                const quoteResponse = await fetchWithRetry(`${PROXY_URL}https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}`);
+                const quoteResponse = await fetchWithRetry(`${API_BASE_URL}/quote/${ticker}`);
                 const quoteData = await quoteResponse.json();
                 let results = [];
 
-                if (quoteData.quoteResponse && quoteData.quoteResponse.result && quoteData.quoteResponse.result[0]) {
-                    const quote = quoteData.quoteResponse.result[0];
-                    // Check options chain
-                    const optionsResponse = await fetchWithRetry(`${PROXY_URL}https://query1.finance.yahoo.com/v7/finance/options/${ticker}`);
+                if (quoteData['Time Series (Daily)'] && Object.keys(quoteData['Time Series (Daily)']).length > 0) {
+                    const optionsResponse = await fetchWithRetry(`${API_BASE_URL}/options/${ticker}`);
                     const optionsData = await optionsResponse.json();
-                    if (optionsData.optionChain && optionsData.optionChain.result && optionsData.optionChain.result[0]) {
+                    if (optionsData['Options Data'] && optionsData['Options Data'].expirations) {
                         results.push({
                             ticker: ticker,
-                            name: quote.longName || quote.shortName || `Unknown (${ticker})`,
+                            name: quoteData['Meta Data']['2. Symbol'] || `Unknown (${ticker})`,
                             type: 'Options'
                         });
                     }
                 }
 
                 if (results.length === 0) {
-                    lookupResults.innerHTML = `<p>No options chain found for "${ticker}". Try ^SPX, ^XSP, AAPL, TSLA, or ^VIX.</p>`;
+                    lookupResults.innerHTML = `<p>No options chain found for "${ticker}". Try SPX, AAPL, TSLA, or VIX. Ensure Alpha Vantage premium plan or switch to Tradier API.</p>`;
                     return;
                 }
 
@@ -216,7 +153,7 @@
                     fetchExpirations(ticker);
                 }
             } catch (error) {
-                lookupResults.innerHTML = `<p>Error searching ticker: ${error.message}. Visit https://cors-anywhere.herokuapp.com/corsdemo to activate proxy. Try ^SPX, ^XSP, AAPL, TSLA, or ^VIX.</p>`;
+                lookupResults.innerHTML = `<p>Error searching ticker: ${error.message}. Ensure server is running (http://localhost:3000) and Alpha Vantage API key supports OPTIONS_DATA. Try SPX, AAPL, TSLA, or VIX.</p>`;
             }
         }
 
@@ -231,36 +168,32 @@
             expirationSelect.innerHTML = '<option value="">Loading expirations...</option>';
 
             try {
-                const response = await fetchWithRetry(`${PROXY_URL}https://query1.finance.yahoo.com/v7/finance/options/${ticker}`);
+                const response = await fetchWithRetry(`${API_BASE_URL}/options/${ticker}`);
                 const data = await response.json();
-                if (!data.optionChain || !data.optionChain.result || !data.optionChain.result[0]) {
+                if (!data['Options Data'] || !data['Options Data'].expirations) {
                     expirationSelect.innerHTML = '<option value="">No expirations found</option>';
                     return;
                 }
 
-                const expirations = data.optionChain.result[0].expirationDates || [];
+                const expirations = data['Options Data'].expirations;
                 if (expirations.length === 0) {
                     expirationSelect.innerHTML = '<option value="">No expirations available</option>';
                     return;
                 }
 
                 expirationSelect.innerHTML = '<option value="">Select expiration date</option>' + 
-                    expirations.map(timestamp => {
-                        const date = new Date(timestamp * 1000);
-                        const dateStr = date.toISOString().split('T')[0];
-                        return `<option value="${timestamp}">${dateStr}</option>`;
-                    }).join('');
+                    expirations.map(exp => `<option value="${exp}">${exp}</option>`).join('');
             } catch (error) {
-                expirationSelect.innerHTML = `<option value="">Error loading expirations: ${error.message}. Visit https://cors-anywhere.herokuapp.com/corsdemo to activate proxy.</option>`;
+                expirationSelect.innerHTML = `<option value="">Error loading expirations: ${error.message}. Ensure server is running and API key is valid.</option>`;
             }
         }
 
         async function analyzeSpreads() {
             const ticker = document.getElementById('ticker').value.trim();
-            const expirationTimestamp = document.getElementById('expiration').value;
+            const expiration = document.getElementById('expiration').value;
             const spreadType = document.getElementById('spreadType').value;
 
-            if (!ticker || !expirationTimestamp) {
+            if (!ticker || !expiration) {
                 alert('Please enter ticker and select an expiration date.');
                 return;
             }
@@ -269,27 +202,34 @@
             output.innerHTML = '<p>Loading options chain...</p>';
 
             try {
-                const url = `${PROXY_URL}https://query1.finance.yahoo.com/v7/finance/options/${ticker}?date=${expirationTimestamp}`;
-                const response = await fetchWithRetry(url);
-                const data = await response.json();
+                const quoteResponse = await fetchWithRetry(`${API_BASE_URL}/quote/${ticker}`);
+                const quoteData = await quoteResponse.json();
+                if (!quoteData['Time Series (Daily)']) {
+                    throw new Error('Unable to fetch underlying price.');
+                }
+                const latestDate = Object.keys(quoteData['Time Series (Daily)'])[0];
+                const S = parseFloat(quoteData['Time Series (Daily)'][latestDate]['4. close']);
 
-                if (!data.optionChain || !data.optionChain.result || !data.optionChain.result[0]) {
-                    throw new Error('No options data found for this ticker and expiration. Try a different date or ticker (e.g., AAPL, TSLA).');
+                const optionsResponse = await fetchWithRetry(`${API_BASE_URL}/options/${ticker}?expiration=${expiration}`);
+                const optionsData = await optionsResponse.json();
+                if (!optionsData['Options Data'] || !optionsData['Options Data'].options) {
+                    throw new Error('No options data found for this ticker and expiration.');
                 }
 
-                const options = data.optionChain.result[0];
-                const S = options.quote.regularMarketPrice; // Underlying price
-                const r = 0.05; // Risk-free rate assumption
-                const today = Date.now() / 1000; // Current timestamp in seconds
-                const T = (expirationTimestamp - today) / (365 * 24 * 3600); // Time to expiration in years
-                const calls = options.options[0].calls || [];
-                const puts = options.options[0].puts || [];
+                const options = optionsData['Options Data'].options;
+                const calls = options.filter(opt => opt.type === 'call');
+                const puts = options.filter(opt => opt.type === 'put');
 
                 const chain = spreadType === 'call' ? calls : puts;
 
                 if (chain.length === 0) {
-                    throw new Error(`No ${spreadType} options found for this expiration. Try a different ticker or date.`);
+                    throw new Error(`No ${spreadType} options found for this expiration.`);
                 }
+
+                const r = 0.05; // Risk-free rate assumption
+                const today = new Date();
+                const expDate = new Date(expiration);
+                const T = (expDate - today) / (1000 * 60 * 60 * 24 * 365); // Time to expiration in years
 
                 const profitableSpreads = [];
                 for (let i = 0; i < chain.length - 1; i++) {
@@ -300,7 +240,6 @@
                         if (spreadType === 'call' && shortOption.strike >= longOption.strike) continue;
                         if (spreadType === 'put' && shortOption.strike <= longOption.strike) continue;
 
-                        // Mid price and slippage
                         const shortMid = (shortOption.bid + shortOption.ask) / 2;
                         const longMid = (longOption.bid + longOption.ask) / 2;
                         let credit = shortMid - longMid - 0.05; // Slippage adjustment
@@ -313,9 +252,9 @@
                         const riskReward = credit / maxLoss;
                         if (riskReward <= 1) continue; // R/R > 100%
 
-                        const sigma = shortOption.impliedVolatility || 0.2; // Fallback IV
+                        const sigma = shortOption.implied_volatility || 0.2; // Fallback IV
                         const shortDelta = blackScholesDelta(S, shortOption.strike, T, r, sigma, spreadType);
-                        const pop = spreadType === 'call' ? 1 - shortDelta : -shortDelta; // Probability of max profit
+                        const pop = spreadType === 'call' ? 1 - shortDelta : -shortDelta;
                         if (pop <= 0.55) continue; // POP > 55%
 
                         const ev = pop * credit + (1 - pop) * (-maxLoss);
@@ -338,7 +277,7 @@
                 } else {
                     output.innerHTML = `
                         <h2>Profitable Vertical ${spreadType.toUpperCase()} Credit Spreads for ${ticker}</h2>
-                        <p>Expiration: ${new Date(parseInt(expirationTimestamp) * 1000).toLocaleDateString()}</p>
+                        <p>Expiration: ${expiration}</p>
                         <ul>
                             ${profitableSpreads.map(spread => `
                                 <li>
@@ -351,16 +290,14 @@
                     `;
                 }
             } catch (error) {
-                output.innerHTML = `<p>Error: ${error.message}. Visit https://cors-anywhere.herokuapp.com/corsdemo to activate proxy. Try ^SPX, ^XSP, AAPL, TSLA, or ^VIX.</p>`;
+                output.innerHTML = `<p>Error: ${error.message}. Ensure server is running (http://localhost:3000) and Alpha Vantage API key supports OPTIONS_DATA. Try SPX, AAPL, TSLA, or VIX, or switch to Tradier API.</p>`;
             }
         }
 
         async function fetchWithRetry(url, retries = 5, delay = 3000) {
             for (let i = 0; i < retries; i++) {
                 try {
-                    const response = await fetch(url, {
-                        headers: { 'User-Agent': getRandomUserAgent() }
-                    });
+                    const response = await fetch(url);
                     if (response.status === 429 || response.status === 403) {
                         await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
                         continue;
@@ -375,7 +312,7 @@
             }
         }
 
-        window.onload = () => fetchExpirations('^SPX');
+        window.onload = () => fetchExpirations('SPX');
     </script>
 </body>
 </html>
