@@ -15,7 +15,7 @@ const TRADIER_API_KEY = process.env.TRADIER_API_KEY || 'YOUR_TRADIER_API_KEY'; /
 app.use(cors());
 
 // Serve static files from the public folder
-app.use(express.static(join(__dirname, 'public')));
+app.use(express.static(join(__dirname)));
 
 // Alpha Vantage: Quote
 app.get('/api/alpha-vantage/quote/:symbol', async (req, res) => {
