@@ -52,6 +52,19 @@
         nav {
             margin: 10px 0;
         }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left: 4px solid #4BC0C0;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
         @media (max-width: 600px) {
             h1 {
                 font-size: 1.2em;
@@ -70,8 +83,8 @@
         <a href="index.html"><button>Price Prediction App</button></a>
     </nav>
     <h1>Advanced Options Trading Analyzer</h1>
-    <p>Enter ticker (e.g., SPX, AAPL, TSLA), select expiration, spread type, and analyze spreads with $0.05 slippage, EV > $1, R/R > 100%, POP > 55%.</p>
-    <input type="text" id="ticker" placeholder="Ticker (e.g., SPX, AAPL, TSLA)" value="SPX" />
+    <p>Enter ticker (e.g., ^SPX, ^XSP, AAPL, TSLA), select expiration, spread type, and analyze spreads with $0.05 slippage, EV > $1, R/R > 100%, POP > 55%.</p>
+    <input type="text" id="ticker" placeholder="Ticker (e.g., ^SPX, ^XSP, AAPL, TSLA)" value="^SPX" />
     <button onclick="lookupTicker()">Lookup Ticker</button>
     <div id="lookupResults"></div>
     <select id="expiration">
@@ -85,8 +98,7 @@
     <div id="output"></div>
 
     <script>
-        // Switch to '/api/tradier' if Alpha Vantage OPTIONS_DATA is unavailable
-        const API_BASE_URL = 'http://localhost:3000/api/alpha-vantage';
+        const API_BASE_URL = 'http://localhost:3000/api';
 
         function normCdf(x) {
             const t = 1 / (1 + 0.2316419 * Math.abs(x));
@@ -107,9 +119,9 @@
         }
 
         async function lookupTicker() {
-            const ticker = document.getElementById('ticker').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            const ticker = document.getElementById('ticker').value.trim().toUpperCase().replace(/[^A-Z0-9^]/g, '');
             const lookupResults = document.getElementById('lookupResults');
-            lookupResults.innerHTML = '<p>Searching...</p>';
+            lookupResults.innerHTML = '<div class="spinner"></div>';
 
             if (!ticker) {
                 lookupResults.innerHTML = '<p>Please enter a ticker to search.</p>';
@@ -117,24 +129,24 @@
             }
 
             try {
-                const quoteResponse = await fetchWithRetry(`${API_BASE_URL}/quote/${ticker}`);
+                const quoteResponse = await fetchWithRetry(`${API_BASE_URL}/tradestation/quote/${ticker}`);
                 const quoteData = await quoteResponse.json();
                 let results = [];
 
-                if (quoteData['Time Series (Daily)'] && Object.keys(quoteData['Time Series (Daily)']).length > 0) {
-                    const optionsResponse = await fetchWithRetry(`${API_BASE_URL}/options/${ticker}`);
+                if (quoteData.Quotes && quoteData.Quotes.length > 0) {
+                    const optionsResponse = await fetchWithRetry(`${API_BASE_URL}/tradestation/options/${ticker}`);
                     const optionsData = await optionsResponse.json();
-                    if (optionsData['Options Data'] && optionsData['Options Data'].expirations) {
+                    if (optionsData.Expirations && optionsData.Expirations.length > 0) {
                         results.push({
                             ticker: ticker,
-                            name: quoteData['Meta Data']['2. Symbol'] || `Unknown (${ticker})`,
+                            name: quoteData.Quotes[0].Description || `Unknown (${ticker})`,
                             type: 'Options'
                         });
                     }
                 }
 
                 if (results.length === 0) {
-                    lookupResults.innerHTML = `<p>No options chain found for "${ticker}". Try SPX, AAPL, TSLA, or VIX. Ensure Alpha Vantage premium plan or switch to Tradier API.</p>`;
+                    lookupResults.innerHTML = `<p>No options chain found for "${ticker}". Try ^SPX, ^XSP, AAPL, or TSLA.</p>`;
                     return;
                 }
 
@@ -152,7 +164,7 @@
                     fetchExpirations(ticker);
                 }
             } catch (error) {
-                lookupResults.innerHTML = `<p>Error searching ticker: ${error.message}. Ensure server is running (http://localhost:3000) and Alpha Vantage API key supports OPTIONS_DATA. Try SPX, AAPL, TSLA, or VIX.</p>`;
+                lookupResults.innerHTML = `<p>Error searching ticker: ${error.message}. Ensure server is running (http://localhost:3000) and TradeStation access token is valid.</p>`;
             }
         }
 
@@ -167,14 +179,14 @@
             expirationSelect.innerHTML = '<option value="">Loading expirations...</option>';
 
             try {
-                const response = await fetchWithRetry(`${API_BASE_URL}/options/${ticker}`);
+                const response = await fetchWithRetry(`${API_BASE_URL}/tradestation/options/${ticker}`);
                 const data = await response.json();
-                if (!data['Options Data'] || !data['Options Data'].expirations) {
+                if (!data.Expirations || !data.Expirations.length) {
                     expirationSelect.innerHTML = '<option value="">No expirations found</option>';
                     return;
                 }
 
-                const expirations = data['Options Data'].expirations;
+                const expirations = data.Expirations.map(exp => exp.ExpirationDate);
                 if (expirations.length === 0) {
                     expirationSelect.innerHTML = '<option value="">No expirations available</option>';
                     return;
@@ -183,7 +195,7 @@
                 expirationSelect.innerHTML = '<option value="">Select expiration date</option>' + 
                     expirations.map(exp => `<option value="${exp}">${exp}</option>`).join('');
             } catch (error) {
-                expirationSelect.innerHTML = `<option value="">Error loading expirations: ${error.message}. Ensure server is running and API key is valid.</option>`;
+                expirationSelect.innerHTML = `<option value="">Error loading expirations: ${error.message}. Ensure server is running and TradeStation access token is valid.</option>`;
             }
         }
 
@@ -198,26 +210,25 @@
             }
 
             const output = document.getElementById('output');
-            output.innerHTML = '<p>Loading options chain...</p>';
+            output.innerHTML = '<div class="spinner"></div>';
 
             try {
-                const quoteResponse = await fetchWithRetry(`${API_BASE_URL}/quote/${ticker}`);
+                const quoteResponse = await fetchWithRetry(`${API_BASE_URL}/tradestation/quote/${ticker}`);
                 const quoteData = await quoteResponse.json();
-                if (!quoteData['Time Series (Daily)']) {
+                if (!quoteData.Quotes || !quoteData.Quotes.length) {
                     throw new Error('Unable to fetch underlying price.');
                 }
-                const latestDate = Object.keys(quoteData['Time Series (Daily)'])[0];
-                const S = parseFloat(quoteData['Time Series (Daily)'][latestDate]['4. close']);
+                const S = parseFloat(quoteData.Quotes[0].Last); // Underlying price
 
-                const optionsResponse = await fetchWithRetry(`${API_BASE_URL}/options/${ticker}?expiration=${expiration}`);
+                const optionsResponse = await fetchWithRetry(`${API_BASE_URL}/tradestation/options/${ticker}?expiration=${expiration}`);
                 const optionsData = await optionsResponse.json();
-                if (!optionsData['Options Data'] || !optionsData['Options Data'].options) {
+                if (!optionsData.Options || !optionsData.Options.length) {
                     throw new Error('No options data found for this ticker and expiration.');
                 }
 
-                const options = optionsData['Options Data'].options;
-                const calls = options.filter(opt => opt.type === 'call');
-                const puts = options.filter(opt => opt.type === 'put');
+                const options = optionsData.Options;
+                const calls = options.filter(opt => opt.OptionType === 'Call');
+                const puts = options.filter(opt => opt.OptionType === 'Put');
 
                 const chain = spreadType === 'call' ? calls : puts;
 
@@ -236,23 +247,23 @@
                     for (let j = i + 1; j < chain.length; j++) {
                         const longOption = chain[j];
 
-                        if (spreadType === 'call' && shortOption.strike >= longOption.strike) continue;
-                        if (spreadType === 'put' && shortOption.strike <= longOption.strike) continue;
+                        if (spreadType === 'call' && shortOption.StrikePrice >= longOption.StrikePrice) continue;
+                        if (spreadType === 'put' && shortOption.StrikePrice <= longOption.StrikePrice) continue;
 
-                        const shortMid = (shortOption.bid + shortOption.ask) / 2;
-                        const longMid = (longOption.bid + longOption.ask) / 2;
+                        const shortMid = (shortOption.Bid + shortOption.Ask) / 2;
+                        const longMid = (longOption.Bid + longOption.Ask) / 2;
                         let credit = shortMid - longMid - 0.05; // Slippage adjustment
                         if (credit <= 0) continue;
 
-                        const width = Math.abs(shortOption.strike - longOption.strike);
+                        const width = Math.abs(shortOption.StrikePrice - longOption.StrikePrice);
                         const maxLoss = width - credit;
                         if (maxLoss <= 0) continue;
 
                         const riskReward = credit / maxLoss;
                         if (riskReward <= 1) continue; // R/R > 100%
 
-                        const sigma = shortOption.implied_volatility || 0.2; // Fallback IV
-                        const shortDelta = blackScholesDelta(S, shortOption.strike, T, r, sigma, spreadType);
+                        const sigma = shortOption.ImpliedVolatility || 0.2; // Fallback IV
+                        const shortDelta = blackScholesDelta(S, shortOption.StrikePrice, T, r, sigma, spreadType);
                         const pop = spreadType === 'call' ? 1 - shortDelta : -shortDelta;
                         if (pop <= 0.55) continue; // POP > 55%
 
@@ -260,8 +271,8 @@
                         if (ev <= 1) continue; // EV > $1
 
                         profitableSpreads.push({
-                            shortStrike: shortOption.strike,
-                            longStrike: longOption.strike,
+                            shortStrike: shortOption.StrikePrice,
+                            longStrike: longOption.StrikePrice,
                             credit: credit.toFixed(2),
                             maxLoss: maxLoss.toFixed(2),
                             riskReward: (riskReward * 100).toFixed(2) + '%',
@@ -272,7 +283,7 @@
                 }
 
                 if (profitableSpreads.length === 0) {
-                    output.innerHTML = `<p>No profitable vertical ${spreadType} spreads found for ${ticker} matching criteria (EV > $1, R/R > 100%, POP > 55%). Try a different ticker (e.g., AAPL, TSLA) or expiration.</p>`;
+                    output.innerHTML = `<p>No profitable vertical ${spreadType} spreads found for ${ticker} matching criteria (EV > $1, R/R > 100%, POP > 55%). Try a different ticker (e.g., ^SPX, ^XSP, AAPL, TSLA) or expiration.</p>`;
                 } else {
                     output.innerHTML = `
                         <h2>Profitable Vertical ${spreadType.toUpperCase()} Credit Spreads for ${ticker}</h2>
@@ -289,7 +300,7 @@
                     `;
                 }
             } catch (error) {
-                output.innerHTML = `<p>Error: ${error.message}. Ensure server is running (http://localhost:3000) and Alpha Vantage API key supports OPTIONS_DATA. Try SPX, AAPL, TSLA, or VIX, or switch to Tradier API.</p>`;
+                output.innerHTML = `<p>Error: ${error.message}. Ensure server is running (http://localhost:3000) and TradeStation access token is valid. Try ^SPX, ^XSP, AAPL, or TSLA.</p>`;
             }
         }
 
@@ -311,7 +322,7 @@
             }
         }
 
-        window.onload = () => fetchExpirations('SPX');
+        window.onload = () => fetchExpirations('^SPX');
     </script>
 </body>
 </html>

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "mocha test/*.test.js --timeout 5000 --experimental-specifier-resolution=node",
     "server": "nodemon server.js"
   },
   "keywords": [],
@@ -18,5 +18,12 @@
     "express": "^5.1.0",
     "node-fetch": "^3.3.2",
     "nodemon": "^3.1.10"
+  },
+  "devDependencies": {
+    "chai": "^6.0.1",
+    "jsdom": "^26.1.0",
+    "jsdom-global": "^3.0.2",
+    "mocha": "^11.7.1",
+    "sinon": "^21.0.0"
   }
 }

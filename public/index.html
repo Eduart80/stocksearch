@@ -70,11 +70,11 @@
             height: 36px;
             animation: spin 1s linear infinite;
             margin: 20px auto;
-            }
+        }
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
-            }
+        }
         @media (max-width: 600px) {
             h1 {
                 font-size: 1.2em;
@@ -113,13 +113,13 @@
     </div>
 
     <script>
-        const ALPHA_VANTAGE_API_KEY = 'A96Z9ST5YY6GBVUG'; // Replace with your Alpha Vantage API key
-        //A96Z9ST5YY6GBVUG, XQD97FFG75HFV1TA
+        const API_BASE_URL = 'http://localhost:3000/api';
+
         async function lookupTicker() {
             const ticker = document.getElementById('ticker').value.trim().toLowerCase().replace(/[^a-z0-9-^=]/g, '');
             const assetType = document.getElementById('assetType').value;
             const lookupResults = document.getElementById('lookupResults');
-            lookupResults.innerHTML = '<p>Searching...</p>';
+            lookupResults.innerHTML = '<div class="spinner"></div>';
 
             if (!ticker) {
                 lookupResults.innerHTML = '<p>Please enter a ticker to search.</p>';
@@ -129,7 +129,7 @@
             try {
                 let results = [];
                 if (assetType === 'crypto') {
-                    const response = await fetchWithRetry(`https://api.coingecko.com/api/v3/search?query=${ticker}`);
+                    const response = await fetchWithRetry(`${API_BASE_URL}/coingecko/search/${ticker}`);
                     const data = await response.json();
                     if (data.coins && data.coins.length > 0) {
                         results = data.coins.slice(0, 5).map(coin => ({
@@ -140,14 +140,13 @@
                         }));
                     }
                 } else {
-                    const response = await fetchWithRetry(`https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=${ticker}&apikey=${ALPHA_VANTAGE_API_KEY}`);
+                    const response = await fetchWithRetry(`${API_BASE_URL}/tradestation/quote/${ticker}`);
                     const data = await response.json();
-                    
-                    if (data['bestMatches'] && data['bestMatches'].length > 0) {
-                        results = data['bestMatches'].slice(0, 5).map(match => ({
-                            ticker: match['1. symbol'],
-                            name: match['2. name'],
-                            type: match['3. type'] === 'Equity' ? 'Stock' : (match['3. type'] === 'Index' ? 'Index Options' : 'Futures')
+                    if (data.Quotes && data.Quotes.length > 0) {
+                        results = data.Quotes.slice(0, 5).map(quote => ({
+                            ticker: quote.Symbol,
+                            name: quote.Description,
+                            type: assetType === 'stock' ? 'Stock' : (assetType === 'futures' ? 'Futures' : 'Index Options')
                         }));
                     }
                     if (assetType === 'options' && (ticker === 'spx' || ticker === '^spx' || ticker === 'xsp' || ticker === '^xsp')) {
@@ -160,7 +159,7 @@
                 }
 
                 if (results.length === 0) {
-                    lookupResults.innerHTML = `<p>No results found for "${ticker}" in ${assetType}. Try a different ticker or asset type.</p>`;
+                    lookupResults.innerHTML = `<p>No results found for "${ticker}" in ${assetType}. Try a different ticker or asset type (e.g., AAPL, ES=F, ^SPX).</p>`;
                     return;
                 }
 
@@ -168,20 +167,22 @@
                     <p><strong>Search Results for "${ticker}":</strong></p>
                     <ul>
                         ${results.map(r => `
-                            <li class="ticker-option" onclick="selectTicker('${r.ticker}', '${r.type.toLowerCase()}')">
+                            <li class="ticker-option" onclick="selectTicker('${r.ticker}', '${r.type.toLowerCase()}${r.id ? ',' + r.id : ''}')">
                                 ${r.ticker} - ${r.name} (${r.type}${r.id ? ', Coin ID: ' + r.id : ''})
                             </li>
                         `).join('')}
                     </ul>
                 `;
             } catch (error) {
-                lookupResults.innerHTML = `<p>Error searching ticker: ${error.message}. Please try again.</p>`;
+                lookupResults.innerHTML = `<p>Error searching ticker: ${error.message}. Ensure server is running (http://localhost:3000) and TradeStation access token is valid.</p>`;
             }
         }
 
         function selectTicker(ticker, type) {
+            const [assetType, coinId] = type.split(',');
             document.getElementById('ticker').value = ticker;
-            document.getElementById('assetType').value = type;
+            document.getElementById('assetType').value = assetType;
+            document.getElementById('ticker').dataset.coinId = coinId || '';
             document.getElementById('lookupResults').innerHTML = '';
         }
 
@@ -250,36 +251,32 @@
         async function getPrediction() {
             const ticker = document.getElementById('ticker').value.trim().toLowerCase().replace(/[^a-z0-9-^=]/g, '');
             const assetTypeSelected = document.getElementById('assetType').value;
+            const coinId = document.getElementById('ticker').dataset.coinId || '';
             if (!ticker) {
                 alert('Please enter a valid ticker or use Lookup to find one.');
                 return;
             }
 
             const output = document.getElementById('output');
-            output.innerHTML = '<p>Loading...</p>';
+            output.innerHTML = '<div class="spinner"></div>';
 
             try {
                 let currentPrice = 0;
                 let prices = [];
                 let assetType = assetTypeSelected === 'options' ? 'Index Options' : assetTypeSelected.charAt(0).toUpperCase() + assetTypeSelected.slice(1);
-                let coinId = '';
 
                 if (assetTypeSelected === 'crypto') {
-                    const searchResponse = await fetchWithRetry(`https://api.coingecko.com/api/v3/search?query=${ticker}`);
-                    const searchData = await searchResponse.json();
-                    if (!searchData.coins || searchData.coins.length === 0) {
-                        throw new Error('No crypto found for this ticker.');
+                    if (!coinId) {
+                        throw new Error('No Coin ID found. Use Lookup to select a crypto ticker.');
                     }
-                    coinId = searchData.coins[0].id;
-
-                    const priceResponse = await fetchWithRetry(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+                    const priceResponse = await fetchWithRetry(`${API_BASE_URL}/coingecko/price/${coinId}`);
                     const priceData = await priceResponse.json();
                     currentPrice = priceData[coinId]?.usd;
                     if (!currentPrice) {
                         throw new Error('Unable to fetch current price.');
                     }
 
-                    const marketResponse = await fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=35&interval=daily`);
+                    const marketResponse = await fetchWithRetry(`${API_BASE_URL}/coingecko/market/${coinId}`);
                     const marketData = await marketResponse.json();
                     prices = marketData.prices;
                 } else {
@@ -293,15 +290,22 @@
                             throw new Error('Invalid index options ticker. Use ^SPX or ^XSP.');
                         }
                     }
-                    const response = await fetchWithRetry(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&outputsize=compact&apikey=${ALPHA_VANTAGE_API_KEY}`);
-                    const data = await response.json();
-                    if (data['Error Message'] || !data['Time Series (Daily)']) {
+                    const quoteResponse = await fetchWithRetry(`${API_BASE_URL}/tradestation/quote/${symbol}`);
+                    const quoteData = await quoteResponse.json();
+                    if (!quoteData.Quotes || !quoteData.Quotes.length) {
                         throw new Error(`No ${assetTypeSelected} found for ticker ${symbol}. Try using Lookup.`);
                     }
-                    const timeSeries = data['Time Series (Daily)'];
-                    const dates = Object.keys(timeSeries).sort().slice(-35);
-                    prices = dates.map(date => [new Date(date).getTime(), parseFloat(timeSeries[date]['4. close'])]);
-                    currentPrice = prices[prices.length - 1][1];
+                    currentPrice = parseFloat(quoteData.Quotes[0].Last);
+
+                    const historicalResponse = await fetchWithRetry(`${API_BASE_URL}/tradestation/historical/${symbol}?interval=1&unit=Day`);
+                    const historicalData = await historicalResponse.json();
+                    if (!historicalData.Bars || !historicalData.Bars.length) {
+                        throw new Error('No historical data found for this ticker.');
+                    }
+                    prices = historicalData.Bars.map(bar => [
+                        new Date(bar.TimeStamp).getTime(),
+                        parseFloat(bar.Close)
+                    ]).sort((a, b) => a[0] - b[0]).slice(-35);
                 }
 
                 if (prices.length < 26 + 9) {
@@ -400,11 +404,11 @@
                     <p><strong>Average Predicted:</strong> $${avgPred.toFixed(2)}</p>
                     <h3>Day-by-Day Forecast:</h3>
                     <ul>${daysOfWeek.map(day => `<li>${day}</li>`).join('')}</ul>
-                    <p><strong>Methodology:</strong> Linear regression on 14-day prices${assetTypeSelected === 'crypto' ? ' from CoinGecko' : ' from Alpha Vantage'}, adjusted for volatility. RSI and MACD for signals.</p>
-                    <p><strong>Caveats:</strong> Trend-based prediction, not financial advice. Markets are volatile; prices may vary. Data from ${assetTypeSelected === 'crypto' ? 'CoinGecko' : 'Alpha Vantage'}. Index options data is based on underlying index levels.</p>
+                    <p><strong>Methodology:</strong> Linear regression on 14-day prices${assetTypeSelected === 'crypto' ? ' from CoinGecko' : ' from TradeStation'}, adjusted for volatility. RSI and MACD for signals.</p>
+                    <p><strong>Caveats:</strong> Trend-based prediction, not financial advice. Markets are volatile; prices may vary. Data from ${assetTypeSelected === 'crypto' ? 'CoinGecko' : 'TradeStation'}.</p>
                 `;
             } catch (error) {
-                output.innerHTML = `<p>Error: ${error.message}. Please try again or use Lookup to find the correct ticker.</p>`;
+                output.innerHTML = `<p>Error: ${error.message}. Ensure server is running (http://localhost:3000) and TradeStation access token is valid. Try SPX, AAPL, ES=F, or ^XSP.</p>`;
             }
         }
 
